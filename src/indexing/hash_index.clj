@@ -22,25 +22,30 @@
 
 
 (defn- get-val-internal [db index key]
-  (let [offset (get index key)]
-    (some->> offset
-             (read-line-at db)
-             deserialize
-             second)))
+  (some->> (get index key)
+           (read-line-at db)
+           deserialize
+           second))
 
 
-(defn- set-val-internal [db index key value]
-  (let [output (serialize key value)
-        file-length (.length (io/file db))]
-     (swap! index-atom assoc key file-length)
-     (spit db output :append true)
-     [key value]))
+(defn- write-db [db key value]
+  (spit db
+    (serialize key value)
+    :append true))
 
 
-(defn- increment-index [[index i] [key value]]
-  (let [len (count (serialize key value))
-        new-i (+ i len)]
-       [(assoc index key i) new-i]))
+(defn- write-index [index-atom db-file key]
+  (->> (.length (io/file db-file))
+       (swap! index-atom assoc key)))
+
+
+(defn- set-val-internal [db index-atom key value]
+  (do
+    (write-db db key value)
+    (write-index index-atom db key)
+    [key value]))
+
+
 
 
 (defn get-val [db index-atom key]
@@ -53,24 +58,31 @@
     (set-val-internal main-segment index-atom key value)))
 
 
+(defn- increment-index [[index counter] row]
+  (let [key (-> row
+                deserialize
+                first)]
+      [(assoc index key counter) (+ counter (count row))]))
+
+
 (defn rebuild-index [db]
   (with-open [rdr (io/reader db)]
     (->> (line-seq rdr)
-         (map deserialize)
          (reduce increment-index [{} 0])
          first)))
 
-(def final-char "b")
+
 (defn- new-segment-name [old-name]
   (let [len (count old-name)
         final-char (subs old-name (- len 1))]
     (if (re-matches #"\d+" final-char)
         (str (subs old-name 0 (- len 1)) (inc (Integer/parseInt final-char)))
-        (str old-name "0"))))
+        (str old-name "\\" "0"))))
 
 
-
-(comment (new-segment-name "C:\\temp\\db1"))
+(comment
+  (new-segment-name "C:\\temp\\db") ; "C:\\temp\\db1"
+  (new-segment-name "C:\\temp\\db1")) ; "C:\\temp\\db2"
 
 
 (defn compact [source-segment source-index]
@@ -84,14 +96,16 @@
     [destination-segment destination-index]))
 
 
-(defn init-db [segments-dir]
+(defn init-db [segment]
   (do (spit segment "" :append true)
-    (let [index-atom (atom (rebuild-index segment))])
-    {:main-segment segment
-     :segments {segment index-atom}
-     :segments-by-age [[segment index-atom]]}))
+    (let [index-atom (atom (rebuild-index segment))]
+      {:main-segment segment
+       :segments {segment index-atom}
+       :segments-by-age [[segment index-atom]]})))
+
 
 (comment (init-db (new-segment-name "C:\\temp\\db")))
+
 
 (comment (def hash-index (atom {}))
          (reset! hash-index (rebuild-index "C:\\temp\\db1"))
@@ -111,6 +125,4 @@
          (get-val "C:\\temp\\db2.txt" new-index "bbbbbbbbbb")
 
          (def segments {:main-segment "C:\\temp\\db1"
-                        :segments {"C:\\temp\\db1" atom}})
-
-         ())
+                        :segments {"C:\\temp\\db1" atom}}))
