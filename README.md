@@ -16,7 +16,7 @@ inept; clumsy.
 - ~Read/writes to/from file system.~
 - ~Basic hash index.~
 - ~Compact & merge segment files.~
-- Deletions via tombstoning.
+- ~Deletions via tombstoning.~
 - Hint files (cached versions of the index created during compaction)
 - Upgrade CSV format to something binary.
 
