@@ -15,7 +15,7 @@ inept; clumsy.
 ## Feature Roadmap
 - ~Read/writes to/from file system.~
 - ~Basic hash index.~
-- **In progress:** Compact & merge segment files.
+- ~Compact & merge segment files.~
 - Deletions via tombstoning.
 - Hint files (cached versions of the index created during compaction)
 - Upgrade CSV format to something binary.
