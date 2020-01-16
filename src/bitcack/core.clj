@@ -134,13 +134,12 @@
           key-values (->> (merge-segments segments)
                           (mapv (fn [[key lookup]]
                                  [key (get-by-offset (:segment lookup) (:offset lookup))])))]
-      (do
         (backup (:directory options))
         {:segment compacted-segment
          :order 0
          :index (reduce (fn [index [key value]]
                             (set-in-segment! compacted-segment index key value))
-                  {} key-values)})))
+                  {} key-values)}))
 
 
 (defn- harvest-segments [directory]
