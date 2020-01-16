@@ -62,15 +62,7 @@
   (new-segment-name "C:\\temp\\db\\0")) ; "C:\\temp\\db\\1"
 
 
-(defn get-val
-  "Gets the stored value of a given key from the database.
-  The implementation checks through each segment in the database
-  order until a value is found, and returned."
-  [db-atom key]
-  (let [{:keys [segments]} @db-atom]
-    (some (fn [{:keys [segment index]}]
-            (get-by-key segment index key))
-      segments)))
+
 
 
 (defn- new-segment? [max-segment-size segment]
@@ -118,7 +110,6 @@
        (apply merge)))
 
 
-
 (defn- backup [directory]
   (->> (file-seq (io/file directory))
        (filter #(.isFile %))
@@ -156,6 +147,16 @@
        (sort-by :order #(compare %2 %1))
        vec))
 
+
+(defn get-val
+  "Gets the stored value of a given key from the database.
+  The implementation checks through each segment in the database
+  order until a value is found, and returned."
+  [db-atom key]
+  (let [{:keys [segments]} @db-atom]
+    (some (fn [{:keys [segment index]}]
+            (get-by-key segment index key))
+      segments)))
 
 
 (defn set-val [db key value]
