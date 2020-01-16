@@ -62,9 +62,6 @@
   (new-segment-name "C:\\temp\\db\\0")) ; "C:\\temp\\db\\1"
 
 
-
-
-
 (defn- new-segment? [max-segment-size segment]
   (> (.length (io/file segment)) max-segment-size))
 
@@ -106,7 +103,7 @@
 
 (defn- merge-segments [coll]
   (->> (map segment->file-lookup coll)
-       reverse ; merge
+       reverse
        (apply merge)))
 
 
@@ -120,11 +117,12 @@
                 (into-array java.nio.file.CopyOption [(java.nio.file.StandardCopyOption/REPLACE_EXISTING)])))))
 
 
-(defn compact [{:keys [options segments]}]
+(defn- compact [{:keys [options segments]}]
     (let [compacted-segment (join-paths (:directory options) "0")
           key-values (->> (merge-segments segments)
                           (mapv (fn [[key lookup]]
-                                 [key (get-by-offset (:segment lookup) (:offset lookup))])))]
+                                 [key (get-by-offset (:segment lookup) (:offset lookup))]))
+                          (filter #(not (= ::tombstone (second %)))))]
         (backup (:directory options))
         {:segment compacted-segment
          :order 0
@@ -148,18 +146,21 @@
        vec))
 
 
-(defn get-val
+(defn lookup
   "Gets the stored value of a given key from the database.
   The implementation checks through each segment in the database
   order until a value is found, and returned."
   [db-atom key]
-  (let [{:keys [segments]} @db-atom]
-    (some (fn [{:keys [segment index]}]
-            (get-by-key segment index key))
-      segments)))
+  (let [{:keys [segments]} @db-atom
+        value (some (fn [{:keys [segment index]}]
+                      (get-by-key segment index key))
+                segments)]
+       (if (= ::tombstone value)
+         nil
+         value)))
 
 
-(defn set-val [db key value]
+(defn upsert [db key value]
   (let [db-value @db
         segment (get-in db-value [:segments 0 :segment])
         max-segment-size (get-in db-value [:options :max-segment-size])
@@ -172,7 +173,11 @@
                                         (assoc m :index (set-in-segment! segment index key value))))))
 
 
-(defn init-db
+(defn delete! [db key]
+  (upsert db key ::tombstone))
+
+
+(defn init
   "Initialise the database in the given directory.
    Creates the first database file under the assumption the directory is empty.
    Returns a map:
@@ -187,7 +192,8 @@
                  segments)}))
 
 
-(comment (def db (atom (init-db {:directory "C:\\temp\\db"})))
-         (set-val db "bbbbbbbbbbbbbbbb" :e)
-         (get-val db "bbbbbbbbbbbbbbbb")
-         (merge-segments (:segments @db)))
+(comment (def db (atom (init {:directory "C:\\temp\\db"})))
+         (upsert db "bbbbbbbbbbbbbbbb" :e)
+         (lookup db "bbbbbbbbbbbbbbbb")
+         (delete! db "bbbbbbbbbbbbbbbb")
+         (lookup db "bbbbbbbbbbbbbbbb"))
