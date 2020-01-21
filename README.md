@@ -6,6 +6,9 @@ Written in Clojure on the JVM.
 \**Informal, British.*
 inept; clumsy.
 
+## Why does this exist?
+To play around with Clojure and learn about Hash Indexing, and maybe LSM trees.
+
 ## Key Features
 - Keys are stored in memory for fast look-ups.
 - Writes are append-only, removing disk seeks.
@@ -19,6 +22,7 @@ inept; clumsy.
 - ~Deletions via tombstoning.~
 - Hint files (cached versions of the index created during compaction)
 - Upgrade CSV format to something binary.
+- Type hints.
 
 ## General Todo list
 - Spec public functions.
