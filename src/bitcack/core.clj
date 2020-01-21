@@ -57,24 +57,23 @@
          (join-paths dir greatest-seg))))
 
 (comment
-  (new-segment-name "C:\\temp\\db") ; "C:\\temp\\db\\0"
-  (new-segment-name "C:\\temp\\db\\0")) ; "C:\\temp\\db\\1"
+  (new-segment-name "C:\\temp\\db")) ; "C:\\temp\\db\\0"
 
 
 (defn- new-segment? [max-segment-size segment]
   (> (.length (io/file segment)) max-segment-size))
 
 
-(defn- create-segment [previous-segment]
-  (let [new-segment (new-segment-name previous-segment)]
+(defn- create-segment [directory]
+  (let [new-segment (new-segment-name directory)]
        (spit new-segment "" :append true)
     {:order (Integer/parseInt (str (.getFileName (.toPath (io/file new-segment)))))
      :segment new-segment
      :index {}}))
 
 
-(defn- insert-new-segment [db-atom segment]
-  (let [new-segment (create-segment segment)]
+(defn- insert-new-segment [db-atom directory]
+  (let [new-segment (create-segment directory)]
     (swap! db-atom update-in [:segments]
       (fn [old] (vec (sort-by :order #(compare %2 %1)
                        (conj old new-segment)))))))
@@ -161,10 +160,11 @@
 (defn upsert [db key value]
   (let [db-value @db
         segment (get-in db-value [:segments 0 :segment])
+        db-dir (get-in db-value [:options :directory])
         max-segment-size (get-in db-value [:options :max-segment-size])
         max-segment-count (get-in db-value [:options :max-segment-count])]
     (when (new-segment? max-segment-size segment)
-          (insert-new-segment db segment))
+          (insert-new-segment db db-dir))
     (when (> (count (:segments db-value)) max-segment-count)
           (swap! db #(assoc-in %1 [:segments] [%2]) (compact db-value)))
     (swap! db update-in [:segments 0] (fn [{:keys [segment index] :as m}]
