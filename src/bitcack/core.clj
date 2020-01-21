@@ -35,27 +35,26 @@
                              (first paths)
                              (into-array (rest paths)))))
 
-
-(defn- new-segment-name [old-name]
-  (let [file (io/file old-name)]
-    (if (.isDirectory file)
-      (->> (file-seq file)
+(defn- find-seg-files-in [dir]
+  (let [dir (io/file dir)]
+    (if (.isDirectory dir)
+      (->> (file-seq dir)
            (filter #(.isFile %))
-           (filter #(neg? (.lastIndexOf (.getName %) ".")))
-           ((fn [f]
-             (if (empty? f)
-              (join-paths old-name "0")
-              (->> f
-                   (map #(str (.getFileName (.toPath %))))
-                   (map #(Integer/parseInt %))
-                   (apply max)
-                   inc
-                   str
-                   (join-paths old-name))))))
-      (let [dir (.getParent file)
-            filename (str (.getFileName (.toPath file)))
-            new-file (str (inc (Integer/parseInt filename)))]
-        (join-paths dir new-file)))))
+           (filter #(neg? (.lastIndexOf (.getName %) ".")))) ; segment files have no extension
+      nil)))
+
+
+(defn- new-segment-name [dir]
+  (let [existing-segs (find-seg-files-in dir)
+        greatest-seg (some->> existing-segs
+                              (map #(str (.getFileName (.toPath %))))
+                              (map #(Integer/parseInt %))
+                              (apply max)
+                              inc
+                              str)]
+       (if (nil? greatest-seg)
+         (join-paths dir "0")
+         (join-paths dir greatest-seg))))
 
 (comment
   (new-segment-name "C:\\temp\\db") ; "C:\\temp\\db\\0"
@@ -108,20 +107,21 @@
 
 
 (defn- backup [directory]
-  (->> (file-seq (io/file directory))
-       (filter #(.isFile %))
-       (filter #(neg? (.lastIndexOf (.getName %) ".")))
-       (run! #(java.nio.file.Files/move
-                (.toPath %1)
-                (.toPath (io/file (str (.toPath %1) ".bak")))
-                (into-array java.nio.file.CopyOption [(java.nio.file.StandardCopyOption/REPLACE_EXISTING)])))))
+  (let [files (find-seg-files-in directory)]
+       (run! (fn [seg-file]
+                (let [path (.toPath seg-file)]
+                  (java.nio.file.Files/move
+                   path
+                   (.toPath (io/file (str path ".bak")))
+                   (into-array java.nio.file.CopyOption [(java.nio.file.StandardCopyOption/REPLACE_EXISTING)]))))
+         files)))
 
 
 (defn- compact [{:keys [options segments]}]
     (let [compacted-segment (join-paths (:directory options) "0")
           key-values (->> (merge-segments segments)
-                          (mapv (fn [[key lookup]]
-                                 [key (get-by-offset (:segment lookup) (:offset lookup))]))
+                          (into [] (map (fn [[key lookup]]
+                                          [key (get-by-offset (:segment lookup) (:offset lookup))])))
                           (filter #(not (= ::tombstone (second %)))))]
         (backup (:directory options))
         {:segment compacted-segment
@@ -132,32 +132,30 @@
 
 
 (defn- harvest-segments [directory]
-  (->> (io/file directory)
-       file-seq
-       (filter #(.isFile %))
-       (filter #(neg? (.lastIndexOf (.getName (io/file %)) ".")))
-       (map #(str (.getFileName (.toPath %))))
-       (map (fn [filename]
-              (let [full-path (join-paths directory filename)]
-                {:order (Integer/parseInt filename)
-                 :segment full-path
-                 :index (rebuild-index full-path)})))
-       (sort-by :order #(compare %2 %1))
-       vec))
+  (let [seg-files (find-seg-files-in directory)]
+    (->> seg-files
+         (map #(str (.getFileName (.toPath %))))
+         (map (fn [filename]
+                (let [full-path (join-paths directory filename)]
+                  {:order (Integer/parseInt filename)
+                   :segment full-path
+                   :index (rebuild-index full-path)})))
+         (sort-by :order #(compare %2 %1))
+         vec)))
 
 
 (defn lookup
   "Gets the stored value of a given key from the database.
   The implementation checks through each segment in the database
-  order until a value is found, and returned."
+  order until a value is found and returned."
   [db-atom key]
   (let [{:keys [segments]} @db-atom
         value (some (fn [{:keys [segment index]}]
                       (get-by-key segment index key))
                 segments)]
-       (if (= ::tombstone value)
-         nil
-         value)))
+       (if (= (str ::tombstone) value)
+           (do (prn "it's tombestone") nil)
+           value)))
 
 
 (defn upsert [db key value]
@@ -186,14 +184,14 @@
   [options]
   (let [default-config {:max-segment-size 2048 :max-segment-count 50}
         segments (harvest-segments (:directory options))]
-    {:options (merge default-config options)
-     :segments (if (empty? segments)
-                 [(create-segment (:directory options))]
-                 segments)}))
+    (atom {:options (merge default-config options)
+           :segments (if (empty? segments)
+                       [(create-segment (:directory options))]
+                       segments)})))
 
 
-(comment (def db (atom (init {:directory "C:\\temp\\db"})))
-         (upsert db "bbbbbbbbbbbbbbbb" :e)
+(comment (def db (init {:directory "C:\\temp\\db"}))
+         (upsert db "bbbbbbbbbbbbbbbb" 'what-up)
          (lookup db "bbbbbbbbbbbbbbbb")
          (delete! db "bbbbbbbbbbbbbbbb")
          (lookup db "bbbbbbbbbbbbbbbb"))
