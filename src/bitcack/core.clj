@@ -1,20 +1,14 @@
 (ns bitcack.core
- (:import [java.io RandomAccessFile])
- (:require [clojure.java.io :as io]
-           [bitcack.serialisation :as serialisation]))
 
-
-(defn- read-line-at [file offset]
- (with-open [raf (doto (RandomAccessFile. file "r")
-                   (.seek offset))]
-     (.readLine raf)))
-
+ (:require [bitcack.serialisation :as serde]
+           [bitcack.io :as io]))
 
 (defn- get-by-offset [segment-file offset]
-  (some->> (read-line-at segment-file offset)
-           serialisation/deserialize
+  (some->> (io/read-value-at segment-file offset)
+           serde/deserialize
            second))
 
+(comment (get-by-offset "C:\\temp\\db\\0" 263))
 
 (defn- get-by-key [segment-file index key]
   (some->> (get index key)
@@ -22,52 +16,41 @@
 
 
 (defn- set-in-segment! [segment index key value]
-  (let [offset (.length (io/file segment))]
-    (spit segment
-      (serialisation/serialize key value)
-      :append true)
+  (let [offset (io/file-length segment)
+        serialised (serde/serialize key value)]
+    (prn "Appending " serialised "at offset" offset)
+    (io/append-bytes! segment serialised)
     (assoc index key offset)))
 
-
-(defn- join-paths [& paths]
-  (str
-    (java.nio.file.Paths/get
-                             (first paths)
-                             (into-array (rest paths)))))
-
-(defn- find-seg-files-in [dir]
-  (let [dir (io/file dir)]
-    (if (.isDirectory dir)
-      (->> (file-seq dir)
-           (filter #(.isFile %))
-           (filter #(neg? (.lastIndexOf (.getName %) ".")))) ; segment files have no extension
-      nil)))
-
+(comment
+  (set-in-segment! "C:\\temp\\db\\0" {} "hello" :123a))
 
 (defn- new-segment-name [dir]
-  (let [existing-segs (find-seg-files-in dir)
-        greatest-seg (some->> existing-segs
-                              (map #(str (.getFileName (.toPath %))))
-                              (map #(Integer/parseInt %))
-                              (apply max)
-                              inc
-                              str)]
+  (let [existing-segs (io/find-seg-files-in dir)
+        greatest-seg (when (> (count existing-segs) 0)
+                           (some->> existing-segs
+                                    (map #(str (.getFileName (.toPath %))))
+                                    (map #(Integer/parseInt %))
+                                    (apply max)
+                                    inc
+                                    str))]
        (if (nil? greatest-seg)
-         (join-paths dir "0")
-         (join-paths dir greatest-seg))))
+         (io/join-paths dir "0")
+         (io/join-paths dir greatest-seg))))
 
 (comment
   (new-segment-name "C:\\temp\\db")) ; "C:\\temp\\db\\0"
 
 
 (defn- new-segment? [max-segment-size segment]
-  (> (.length (io/file segment)) max-segment-size))
+  (prn "length of segment: " (io/file-length segment))
+  (> (io/file-length segment) max-segment-size))
 
 
 (defn- create-segment [directory]
   (let [new-segment (new-segment-name directory)]
        (spit new-segment "" :append true)
-    {:order (Integer/parseInt (str (.getFileName (.toPath (io/file new-segment)))))
+    {:order (Integer/parseInt (io/file-name new-segment))
      :segment new-segment
      :index {}}))
 
@@ -81,17 +64,17 @@
 
 (defn- increment-index [[index counter] row]
   (let [key (-> row
-                serialisation/deserialize
+                serde/deserialize
                 first)]
       [(assoc index key counter) (+ counter (count row))]))
 
 
-(defn- rebuild-index [db]
-  (with-open [rdr (io/reader db)]
-    (->> (line-seq rdr)
-         (reduce increment-index [{} 0])
-         first)))
+(defn- rebuild-index [segment]
+  (first (reduce increment-index
+          [{} 0]
+          (io/map-segment identity segment))))
 
+(comment (rebuild-index "C:\\temp\\db\\0"))
 
 (defn- segment->file-lookup [{:keys [segment index]}]
   (reduce-kv (fn [map key value]
@@ -106,18 +89,14 @@
 
 
 (defn- backup [directory]
-  (let [files (find-seg-files-in directory)]
+  (let [files (io/find-seg-files-in directory)]
        (run! (fn [seg-file]
-                (let [path (.toPath seg-file)]
-                  (java.nio.file.Files/move
-                   path
-                   (.toPath (io/file (str path ".bak")))
-                   (into-array java.nio.file.CopyOption [(java.nio.file.StandardCopyOption/REPLACE_EXISTING)]))))
+               (io/rename-file seg-file #(str % ".bak")))
          files)))
 
 
 (defn- compact [{:keys [options segments]}]
-    (let [compacted-segment (join-paths (:directory options) "0")
+    (let [compacted-segment (io/join-paths (:directory options) "0")
           key-values (->> (merge-segments segments)
                           (into [] (map (fn [[key lookup]]
                                           [key (get-by-offset (:segment lookup) (:offset lookup))])))
@@ -131,11 +110,11 @@
 
 
 (defn- harvest-segments [directory]
-  (let [seg-files (find-seg-files-in directory)]
+  (let [seg-files (io/find-seg-files-in directory)]
     (->> seg-files
-         (map #(str (.getFileName (.toPath %))))
+         (map io/file-name)
          (map (fn [filename]
-                (let [full-path (join-paths directory filename)]
+                (let [full-path (io/join-paths directory filename)]
                   {:order (Integer/parseInt filename)
                    :segment full-path
                    :index (rebuild-index full-path)})))
@@ -152,23 +131,29 @@
         value (some (fn [{:keys [segment index]}]
                       (get-by-key segment index key))
                 segments)]
-       (if (= (str ::tombstone) value)
-           (do (prn "it's tombestone") nil)
+       (if (= ::tombstone value)
+           nil
            value)))
 
 
 (defn upsert [db key value]
   (let [db-value @db
         segment (get-in db-value [:segments 0 :segment])
+        index (get-in db-value [:segments 0 :index])
         db-dir (get-in db-value [:options :directory])
         max-segment-size (get-in db-value [:options :max-segment-size])
         max-segment-count (get-in db-value [:options :max-segment-count])]
     (when (new-segment? max-segment-size segment)
+          (prn "Creating new segment.")
           (insert-new-segment db db-dir))
     (when (> (count (:segments db-value)) max-segment-count)
-          (swap! db #(assoc-in %1 [:segments] [%2]) (compact db-value)))
-    (swap! db update-in [:segments 0] (fn [{:keys [segment index] :as m}]
-                                        (assoc m :index (set-in-segment! segment index key value))))))
+          (prn "Compacting db.")
+          (let [compacted-db (compact db-value)]
+            (swap! db #(assoc-in %1 [:segments] [%2]) compacted-db)))
+    (let [new-index (set-in-segment! segment index key value)]
+      (prn "New index: " new-index)
+      (swap! db update-in [:segments 0] (fn [m]
+                                          (assoc m :index new-index))))))
 
 
 (defn delete! [db key]
@@ -191,7 +176,9 @@
 
 
 (comment (def db (init {:directory "C:\\temp\\db"}))
-         (upsert db "bbbbbbbbbbbbbbbb" 'what-up)
+         (upsert db "bbbbbbbbbbbbbbbb" {:arrrrrrrgr 123})
+         (upsert db "bbbbbbbbbbbbbbbb" [0 1 2 3 4])
          (lookup db "bbbbbbbbbbbbbbbb")
          (delete! db "bbbbbbbbbbbbbbbb")
-         (lookup db "bbbbbbbbbbbbbbbb"))
+         (lookup db "bbbbbbbbbbbbbbbb")
+         (deref db))
