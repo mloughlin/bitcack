@@ -1,14 +1,17 @@
 (ns bitcack.core
-
  (:require [bitcack.serialisation :as serde]
-           [bitcack.io :as io]))
+           [bitcack.io :as io]
+           [clojure.spec.alpha :as spec]))
+
 
 (defn- get-by-offset [segment-file offset]
   (some->> (io/read-value-at segment-file offset)
            serde/deserialize
            second))
 
+
 (comment (get-by-offset "C:\\temp\\db\\0" 263))
+
 
 (defn- get-by-key [segment-file index key]
   (some->> (get index key)
@@ -18,7 +21,6 @@
 (defn- set-in-segment! [segment index key value]
   (let [offset (io/file-length segment)
         serialised (serde/serialize key value)]
-    (prn "Appending " serialised "at offset" offset)
     (io/append-bytes! segment serialised)
     (assoc index key offset)))
 
@@ -43,7 +45,6 @@
 
 
 (defn- new-segment? [max-segment-size segment]
-  (prn "length of segment: " (io/file-length segment))
   (> (io/file-length segment) max-segment-size))
 
 
@@ -70,11 +71,14 @@
 
 
 (defn- rebuild-index [segment]
-  (first (reduce increment-index
-          [{} 0]
-          (io/map-segment identity segment))))
+  (->> segment
+       (io/map-segment identity)
+       (reduce increment-index [{} 0])
+       first))
 
-(comment (rebuild-index "C:\\temp\\db\\0"))
+(comment
+  (rebuild-index "C:\\temp\\db\\0"))
+
 
 (defn- segment->file-lookup [{:keys [segment index]}]
   (reduce-kv (fn [map key value]
@@ -83,8 +87,9 @@
 
 
 (defn- merge-segments [coll]
-  (->> (map segment->file-lookup coll)
-       reverse
+  (->> coll
+       (map segment->file-lookup)
+       reverse ; Assume arg coll is "most recent first", merge keeps right-most value (which would be the least recent segment by default)
        (apply merge)))
 
 
@@ -144,14 +149,11 @@
         max-segment-size (get-in db-value [:options :max-segment-size])
         max-segment-count (get-in db-value [:options :max-segment-count])]
     (when (new-segment? max-segment-size segment)
-          (prn "Creating new segment.")
           (insert-new-segment db db-dir))
     (when (> (count (:segments db-value)) max-segment-count)
-          (prn "Compacting db.")
           (let [compacted-db (compact db-value)]
             (swap! db #(assoc-in %1 [:segments] [%2]) compacted-db)))
     (let [new-index (set-in-segment! segment index key value)]
-      (prn "New index: " new-index)
       (swap! db update-in [:segments 0] (fn [m]
                                           (assoc m :index new-index))))))
 

@@ -1,7 +1,6 @@
 (ns bitcack.io
   (:import [java.io RandomAccessFile FileOutputStream DataOutputStream DataInputStream])
-  (:require [clojure.java.io :as jio]
-            [taoensso.nippy :as nippy]))
+  (:require [clojure.java.io :as jio]))
 
 
 (defn read-value-at [file offset]
@@ -68,10 +67,10 @@
       (into-array java.nio.file.CopyOption [(java.nio.file.StandardCopyOption/valueOf (get copy-options copy-option))]))))
 
 
-(defn- safe-read-int [dis]
+(defn- safe-read-int [^DataInputStream dis]
   (try
     (.readInt dis)
-    (catch java.io.EOFException e nil)))
+    (catch java.io.EOFException _e nil)))
 
 
 (defn map-segment [f file]
@@ -83,4 +82,4 @@
     (with-open [dis (DataInputStream. (jio/input-stream (jio/file file)))]
       (into () (map f (cack-seq dis))))))
 
-(comment (map-segment nippy/thaw "C:\\temp\\db\\0"))
+(comment (map-segment identity "C:\\temp\\db\\0"))
