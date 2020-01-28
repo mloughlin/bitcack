@@ -21,14 +21,13 @@ To play around with Clojure and learn about Hash Indexing, and maybe LSM trees.
 - ~Compact & merge segment files.~
 - ~Deletions via tombstoning.~
 - Hint files (cached versions of the index created during compaction)
-- Upgrade CSV format to something binary.
-- Type hints.
+- ~Upgrade CSV format to something binary.~
+- ~Type hints.~ (Now supports Clojure primitives thanks to Nippy serialisation lib).
 
 ## General Todo list
 - Spec public functions.
-- Wrap Java interop calls with Clojure wrapper fns.
+- ~Wrap Java interop calls with Clojure wrapper fns~.
 - Add tests.
-- Split up my side effects and calculations more effectively.
 
 # Thanks
 This is entirely possible thanks to Martin Kleppmann's **[Designing Data-Intensive Applications](https://dataintensive.net/)**, Chapter 3.
