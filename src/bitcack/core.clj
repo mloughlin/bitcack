@@ -1,8 +1,7 @@
 (ns bitcack.core
  (:require [bitcack.serialisation :as serde]
            [bitcack.io :as io]
-           [clojure.spec.alpha :as spec]))
-
+           [clojure.spec.alpha :as s]))
 
 (defn- get-by-offset [segment-file offset]
   (some->> (io/read-value-at segment-file offset)
@@ -10,7 +9,7 @@
            second))
 
 
-(comment (get-by-offset "C:\\temp\\db\\0" 263))
+(comment (get-by-offset "C:\\temp\\db\\0" 120))
 
 
 (defn- get-by-key [segment-file index key]
@@ -139,7 +138,7 @@
            value)))
 
 
-(defn upsert [db key value]
+(defn upsert! [db key value]
   (let [db-value @db
         segment (get-in db-value [:segments 0 :segment])
         index (get-in db-value [:segments 0 :index])
@@ -155,18 +154,22 @@
       (swap! db update-in [:segments 0] (fn [m]
                                           (assoc m :index new-index))))))
 
+(s/fdef delete!
+  :args (s/cat :key string?))
 
 (defn delete! [db key]
-  (upsert db key ::tombstone))
+  (upsert! db key ::tombstone))
+
+
+(s/fdef init
+  :args (s/cat :options ::init-options))
 
 
 (defn init
   "Initialise the database in the given directory.
-   Creates the first database file under the assumption the directory is empty.
-   Returns a map:
-      - :options {:max-segment-size 2048 :directory \"C:\\temp\\db\" :max-segment-count 10}
-      - :segments [{:segment \"C:\\temp\\db\\0\" :index {\"my-key\" 0}}]"
+   Creates the first database file under the assumption the directory is empty."
   [options]
+  {:pre [(s/valid? ::init-options options)]}
   (let [default-config {:max-segment-size 2048 :max-segment-count 50}
         segments (harvest-segments (:directory options))]
     (atom {:options (merge default-config options)
@@ -175,10 +178,13 @@
                        segments)})))
 
 
-(comment (def db (init {:directory "C:\\temp\\db"}))
-         (upsert db "bbbbbbbbbbbbbbbb" {:arrrrrrrgr 123})
-         (upsert db "bbbbbbbbbbbbbbbb" [0 1 2 3 4])
-         (lookup db "bbbbbbbbbbbbbbbb")
-         (delete! db "bbbbbbbbbbbbbbbb")
-         (lookup db "bbbbbbbbbbbbbbbb")
-         (deref db))
+(comment (require '[clojure.spec.test.alpha :as stest])
+         (stest/instrument '(init upsert! lookup delete!))
+         (def db (init {:directory "C:\\temp\\db"}))
+         (upsert! db "my-key" {:my-special-number 123})
+         (lookup db "my-key")
+         (upsert! db "my-key" [0 1 2 3 4 '(abcdef)])
+         (lookup db "my-key")
+         (delete! db "my-key")
+         (lookup db "my-key")
+         (stest/unstrument))
