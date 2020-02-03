@@ -71,10 +71,8 @@
 
 
 (defn- rebuild-index [segment]
-  (->> segment
-       (io/map-segment identity)
-       (reduce increment-index [{} 0])
-       first))
+  (io/with-bytes-seq [values segment]
+    (first (reduce increment-index [{} 0] values))))
 
 (comment
   (rebuild-index "C:\\temp\\db\\0"))

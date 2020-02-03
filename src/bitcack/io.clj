@@ -67,19 +67,23 @@
       (into-array java.nio.file.CopyOption [(java.nio.file.StandardCopyOption/valueOf (get copy-options copy-option))]))))
 
 
-(defn- safe-read-int [^DataInputStream dis]
+(defn safe-read-int [^DataInputStream dis]
   (try
     (.readInt dis)
-    (catch java.io.EOFException _e nil)))
+    (catch java.io.EOFException _ nil)))
 
 
-(defn map-segment [f file]
-  (letfn [(cack-seq [dis]
-            (when-let [len (safe-read-int dis)]
-              (let [ba (byte-array len)]
-                (.readFully dis ba)
-                (cons ba (lazy-seq (cack-seq dis))))))]
-    (with-open [dis (DataInputStream. (jio/input-stream (jio/file file)))]
-      (into () (map f (cack-seq dis))))))
+(defmacro with-bytes-seq [[bind file] & body]
+  `(letfn [(byte-seq-lazy# [dis#]
+                         (when-let [len# (safe-read-int dis#)]
+                           (let [ba# (byte-array len#)]
+                             (.readFully dis# ba#)
+                             (cons ba# (lazy-seq (byte-seq-lazy# dis#))))))]
+    (with-open [s# (DataInputStream. (jio/input-stream (jio/file ~file)))]
+      (let [~bind (byte-seq-lazy# s#)]
+        ~@body))))
 
-(comment (map-segment identity "C:\\temp\\db\\0"))
+
+(comment
+    (with-bytes-seq [byte-seq "C:\\temp\\db\\0"]
+      (into [] (map bitcack.serialisation/deserialize) (take 1 byte-seq))))
