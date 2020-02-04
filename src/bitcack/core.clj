@@ -3,8 +3,12 @@
            [bitcack.io :as io]
            [clojure.spec.alpha :as s]))
 
-(defn- get-by-offset [segment-file offset]
-  (some->> (io/read-value-at segment-file offset)
+
+(s/fdef get-by-offset
+  :args (s/cat :segment ::segment :offset ::offset))
+
+(defn- get-by-offset [segment offset]
+  (some->> (io/read-value-at segment offset)
            serde/deserialize
            second))
 
@@ -12,9 +16,12 @@
 (comment (get-by-offset "C:\\temp\\db\\0" 120))
 
 
-(defn- get-by-key [segment-file index key]
+(s/fdef get-by-key
+  :args (s/cat :segment ::segment :index map? :key ::key))
+
+(defn- get-by-key [segment index key]
   (some->> (get index key)
-           (get-by-offset segment-file)))
+           (get-by-offset segment)))
 
 
 (defn- set-in-segment! [segment index key value]
@@ -25,6 +32,8 @@
 
 (comment
   (set-in-segment! "C:\\temp\\db\\0" {} "hello" :123a))
+
+
 
 (defn- new-segment-name [dir]
   (let [existing-segs (io/find-seg-files-in dir)
@@ -42,6 +51,9 @@
 (comment
   (new-segment-name "C:\\temp\\db")) ; "C:\\temp\\db\\0"
 
+
+(s/fdef new-segment?
+  :args (s/cat :max-segment-size ::max-segment-size :segment ::segment))
 
 (defn- new-segment? [max-segment-size segment]
   (> (io/file-length segment) max-segment-size))
@@ -69,12 +81,17 @@
       [(assoc index key counter) (+ counter (count row))]))
 
 
+
+(s/fdef rebuild-index
+  :args (s/cat :segment ::segment))
+
 (defn- rebuild-index [segment]
   (io/with-bytes-seq [values segment]
     (first (reduce increment-index [{} 0] values))))
 
 (comment
   (rebuild-index "C:\\temp\\db\\0"))
+
 
 
 (defn- segment->file-lookup [{:keys [segment index]}]
@@ -89,6 +106,9 @@
        reverse ; Assume arg coll is "most recent first", merge keeps right-most value (which would be the least recent segment by default)
        (apply merge)))
 
+
+(s/fdef backup
+  :args (s/cat :directory ::directory))
 
 (defn- backup [directory]
   (let [files (io/find-seg-files-in directory)]
@@ -111,6 +131,9 @@
                   {} key-values)}))
 
 
+(s/fdef harvest-segments
+  :args (s/cat :directory ::directory))
+
 (defn- harvest-segments [directory]
   (let [seg-files (io/find-seg-files-in directory)]
     (->> seg-files
@@ -123,6 +146,9 @@
          (sort-by :order #(compare %2 %1))
          vec)))
 
+
+(s/fdef lookup
+  :args (s/cat :sb-atom any? :key ::key))
 
 (defn lookup
   "Gets the stored value of a given key from the database.
@@ -138,7 +164,13 @@
            value)))
 
 
-(defn upsert! [db key value]
+(s/fdef upsert!
+  :args (s/cat :db any? :key ::key :value any?))
+
+(defn upsert!
+  "Inserts or overwrites a key/value pair in the database.
+  Warning: May trigger segment creation/compaction."
+  [db key value]
   (let [db-value @db
         segment (get-in db-value [:segments 0 :segment])
         index (get-in db-value [:segments 0 :index])
@@ -154,16 +186,21 @@
       (swap! db update-in [:segments 0] (fn [m]
                                           (assoc m :index new-index))))))
 
-(s/fdef delete!
-  :args (s/cat :key string?))
 
-(defn delete! [db key]
+
+(s/fdef delete!
+  :args (s/cat :db any? :key ::key))
+
+(defn delete!
+  "Removes a key from the database.
+  Internally uses a tombstone value, which means you can't store
+  the value :bitcack.core/tombstone. SORRY NOT SORRY."
+  [db key]
   (upsert! db key ::tombstone))
 
 
 (s/fdef init
   :args (s/cat :options ::init-options))
-
 
 (defn init
   "Initialise the database in the given directory.
@@ -179,12 +216,9 @@
 
 
 (comment (require '[clojure.spec.test.alpha :as stest])
-         (stest/instrument '(init upsert! lookup delete!))
+         (stest/instrument)
          (def db (init {:directory "C:\\temp\\db"}))
-         (upsert! db "my-key" {:my-special-number 123})
-         (lookup db "my-key")
-         (upsert! db "my-key" [0 1 2 3 4 '(abcdef)])
-         (lookup db "my-key")
+         (upsert! db "my-key" [{:hello "world!"} [:nested 'heterogenous "vec"] 1 2 3 4 '(abcdef)])
          (delete! db "my-key")
          (lookup db "my-key")
          (stest/unstrument))

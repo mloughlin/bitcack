@@ -13,3 +13,5 @@
 (s/def ::key string?)
 
 (s/def ::segment string?)
+
+(s/def ::offset #(>= % 426))
