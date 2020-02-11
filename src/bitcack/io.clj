@@ -73,17 +73,20 @@
     (catch java.io.EOFException _ nil)))
 
 
-(defmacro with-bytes-seq [[bind file] & body]
-  `(letfn [(byte-seq-lazy# [dis#]
-                         (when-let [len# (safe-read-int dis#)]
-                           (let [ba# (byte-array len#)]
-                             (.readFully dis# ba#)
-                             (cons ba# (lazy-seq (byte-seq-lazy# dis#))))))]
-    (with-open [s# (DataInputStream. (jio/input-stream (jio/file ~file)))]
-      (let [~bind (byte-seq-lazy# s#)]
-        ~@body))))
+(defn lazy-byte-seq [^DataInputStream dis]
+  (when-let [len (safe-read-int dis)]
+    (let [ba (byte-array len)]
+      (.readFully dis ba)
+      (cons ba (lazy-seq (lazy-byte-seq dis))))))
+
+
+(defn with-bytes-seq [file f]
+  (with-open [dis (DataInputStream. (jio/input-stream (jio/file file)))]
+    (let [bytes-seq (lazy-byte-seq dis)]
+      (f bytes-seq))))
 
 
 (comment
-    (with-bytes-seq [byte-seq "C:\\temp\\db\\0"]
-      (into [] (map bitcack.serialisation/deserialize) (take 1 byte-seq))))
+    (with-bytes-seq "C:\\temp\\db\\0"
+      (fn [byte-seq]
+        (into [] (map taoensso.nippy/thaw) (take 2 byte-seq)))))
